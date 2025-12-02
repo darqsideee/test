@@ -1,0 +1,1473 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NexTalk Web 2.0 - Admin Edition</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "lucide-react": "https://esm.sh/lucide-react@0.294.0",
+            "firebase/app": "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js",
+            "firebase/auth": "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js",
+            "firebase/firestore": "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js",
+            "firebase/storage": "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js"
+        }
+    }
+    </script>
+
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        /* Custom Scrollbar */
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb, rgba(255,255,255,0.1)); border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover, rgba(255,255,255,0.2)); }
+        
+        .story-ring-new { background: linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888); }
+        .story-ring-seen { background: #3f3f46; } 
+        
+        /* Animations */
+        @keyframes progress { from { width: 0%; } to { width: 100%; } }
+        .animate-progress { animation: progress 5s linear forwards; }
+        
+        @keyframes bell-ring { 
+            0%, 50%, 100% { transform: rotate(0); }
+            10%, 30% { transform: rotate(15deg); }
+            20%, 40% { transform: rotate(-15deg); }
+        }
+        .animate-bell { animation: bell-ring 2s infinite ease-in-out; }
+
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+        .typing-dot { animation: bounce 1s infinite; }
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+        
+        /* Theme Variables Defaults */
+        :root {
+            --bg-primary: #0f0f13;
+            --bg-secondary: #18181b;
+            --bg-tertiary: #27272a;
+            --text-primary: #ffffff;
+            --text-secondary: rgba(255,255,255,0.6);
+            --accent: #7A4DFF;
+            --border: rgba(255,255,255,0.05);
+            --msg-me: #7A4DFF;
+            --msg-them: #27272a;
+        }
+        
+        body { 
+            font-family: 'Inter', system-ui, sans-serif; 
+            background-color: var(--bg-primary); 
+            color: var(--text-primary); 
+            transition: background 0.3s, color 0.3s; 
+        }
+    </style>
+</head>
+<body class="h-screen overflow-hidden selection:bg-[#7A4DFF] selection:text-white" id="app-body">
+
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+            MessageSquare, Users, Settings, Heart, Send, Plus, 
+            Image as ImageIcon, Search, Bell, LogOut, 
+            MoreVertical, Phone, Video, X, Zap, Eye, EyeOff,
+            Hash, Mail, AlertTriangle, CheckCircle, RefreshCw,
+            Camera, ChevronLeft, ChevronRight, Shield, PaintBucket,
+            User, Lock, Trash2, Ban, Globe, Mic, Volume2, UserPlus, FileText, Copy, Edit2, Paperclip, MessageCircle, Activity, Skull, Radio, AlertOctagon, History, PenTool, PauseCircle, PlayCircle, LogIn
+        } from 'lucide-react';
+
+        // --- FIREBASE SETUP ---
+        import { initializeApp } from 'firebase/app';
+        import { 
+            getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, 
+            onAuthStateChanged, signOut, sendEmailVerification, sendPasswordResetEmail, updatePassword, updateEmail
+        } from 'firebase/auth';
+        import { 
+            getFirestore, collection, doc, setDoc, addDoc, onSnapshot, 
+            query, orderBy, serverTimestamp, updateDoc, deleteDoc, getDoc, where, arrayUnion, arrayRemove
+        } from 'firebase/firestore';
+
+        window.process = { env: { NODE_ENV: 'production' } };
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyClqVa0abAGdbWre1SgNQ_LPE3OhFgwqC4",
+            authDomain: "nextalk-4cb86.firebaseapp.com",
+            projectId: "nextalk-4cb86",
+            storageBucket: "nextalk-4cb86.firebasestorage.app",
+            messagingSenderId: "894596255124",
+            appId: "1:894596255124:web:6fdd8b80b8e96fc9aad381",
+            measurementId: "G-M8EDS7KCE2"
+        };
+
+        const _appId = 'nextalk-production-v9'; // Version bump for Soft Delete logic
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // --- CONFIGURATION ---
+        const CLOUDFLARE_WORKER_URL = "https://nextalk-mailer.tvojedomena.workers.dev"; 
+        const ADMIN_EMAIL = "darqsideee@gmail.com";
+        const ADMIN_CODE = "NEXTALKD105";
+
+        // --- UTILS ---
+        const generateFriendCode = () => {
+            const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+            const prefix = Array(3).fill(0).map(() => letters[Math.floor(Math.random() * letters.length)]).join('');
+            const suffix = Math.floor(100000 + Math.random() * 900000).toString(); 
+            return `${prefix}-${suffix}`;
+        };
+        
+        const getAvatar = (uid) => `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}&backgroundColor=b6e3f4`;
+        
+        const handleRealFileUpload = (file) => {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = error => reject(error);
+            });
+        };
+
+        const sendNotificationEmail = async (toEmail, subject, title, message) => {
+            if (!CLOUDFLARE_WORKER_URL.includes("workers.dev")) return;
+            try {
+                await fetch(CLOUDFLARE_WORKER_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ to: toEmail, subject, title, message })
+                });
+            } catch (e) { console.error("Email fail", e); }
+        };
+
+        const logAdminAction = async (text) => {
+            await addDoc(collection(db, 'artifacts', _appId, 'public', 'data', 'audit_log'), {
+                text, createdAt: serverTimestamp()
+            });
+        };
+
+        // --- COMPONENTS ---
+        const ThemeInjector = ({ theme, customColors }) => {
+            useEffect(() => {
+                const root = document.documentElement;
+                if (theme === 'light') {
+                    root.style.setProperty('--bg-primary', '#f4f4f5');
+                    root.style.setProperty('--bg-secondary', '#ffffff');
+                    root.style.setProperty('--bg-tertiary', '#e4e4e7');
+                    root.style.setProperty('--text-primary', '#18181b');
+                    root.style.setProperty('--text-secondary', '#71717a');
+                    root.style.setProperty('--border', 'rgba(0,0,0,0.1)');
+                    root.style.setProperty('--scrollbar-thumb', 'rgba(0,0,0,0.2)');
+                    root.style.setProperty('--msg-me', '#7A4DFF');
+                    root.style.setProperty('--msg-them', '#e4e4e7');
+                } else if (theme === 'custom' && customColors) {
+                    root.style.setProperty('--bg-primary', customColors.bgPrimary);
+                    root.style.setProperty('--bg-secondary', customColors.bgSecondary);
+                    root.style.setProperty('--bg-tertiary', customColors.bgSecondary + '80'); 
+                    root.style.setProperty('--text-primary', customColors.text);
+                    root.style.setProperty('--text-secondary', customColors.text + '99');
+                    root.style.setProperty('--accent', customColors.accent);
+                    root.style.setProperty('--border', customColors.text + '20');
+                    root.style.setProperty('--msg-me', customColors.accent);
+                    root.style.setProperty('--msg-them', customColors.bgSecondary + '90');
+                } else {
+                    root.style.setProperty('--bg-primary', '#0f0f13');
+                    root.style.setProperty('--bg-secondary', '#18181b');
+                    root.style.setProperty('--bg-tertiary', '#27272a');
+                    root.style.setProperty('--text-primary', '#ffffff');
+                    root.style.setProperty('--text-secondary', 'rgba(255,255,255,0.6)');
+                    root.style.setProperty('--border', 'rgba(255,255,255,0.05)');
+                    root.style.setProperty('--msg-me', '#7A4DFF');
+                    root.style.setProperty('--msg-them', '#27272a');
+                }
+            }, [theme, customColors]);
+            return null;
+        };
+
+        const GlassCard = ({ children, className = "", onClick, onContextMenu }) => (
+            <div onClick={onClick} onContextMenu={onContextMenu} className={`backdrop-blur-xl bg-[var(--bg-secondary)] border border-[var(--border)] shadow-xl ${className}`}>
+                {children}
+            </div>
+        );
+
+        const Modal = ({ onClose, title, children }) => (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+                <GlassCard className="w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col rounded-2xl bg-[var(--bg-secondary)]">
+                    <div className="p-5 border-b border-[var(--border)] flex justify-between items-center">
+                        <h2 className="text-xl font-bold text-[var(--text-primary)]">{title}</h2>
+                        <button onClick={onClose} className="p-1 hover:bg-[var(--bg-tertiary)] rounded-full text-[var(--text-primary)]"><X size={20}/></button>
+                    </div>
+                    <div className="p-6 overflow-y-auto custom-scrollbar text-[var(--text-primary)]">
+                        {children}
+                    </div>
+                </GlassCard>
+            </div>
+        );
+
+        const Button = ({ children, onClick, className = "", variant = "primary" }) => {
+            const styles = {
+                primary: "bg-[var(--accent)] text-white hover:brightness-110",
+                secondary: "bg-[var(--bg-tertiary)] text-[var(--text-primary)] hover:bg-opacity-80",
+                danger: "bg-red-500/20 text-red-500 hover:bg-red-500/30"
+            };
+            return (
+                <button onClick={onClick} className={`px-4 py-2 rounded-xl font-bold transition-all active:scale-95 ${styles[variant]} ${className}`}>
+                    {children}
+                </button>
+            );
+        };
+
+        const Input = ({ type = "text", placeholder, value, onChange, icon: Icon, className="" }) => (
+            <div className="relative w-full">
+                {Icon && <Icon className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] w-5 h-5" />}
+                <input 
+                    type={type} 
+                    placeholder={placeholder}
+                    value={value}
+                    onChange={onChange}
+                    className={`w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-xl py-3 text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)] transition-all ${Icon ? 'pl-12' : 'pl-4'} ${className}`}
+                />
+            </div>
+        );
+
+        // --- MODULES ---
+
+        // AUTH SCREEN
+        const AuthScreen = ({ onLogin }) => {
+            const [mode, setMode] = useState('login');
+            const [email, setEmail] = useState("");
+            const [password, setPassword] = useState("");
+            const [username, setUsername] = useState("");
+            const [error, setError] = useState("");
+            const [successMsg, setSuccessMsg] = useState("");
+            const [loading, setLoading] = useState(false);
+
+            const handleAuth = async (e) => {
+                e.preventDefault();
+                setError(""); setLoading(true);
+                try {
+                    if (mode === 'register') {
+                        if (username.length < 3) throw new Error("Jméno je příliš krátké");
+                        const cred = await createUserWithEmailAndPassword(auth, email, password);
+                        await sendEmailVerification(cred.user);
+                        await setDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'users', cred.user.uid), {
+                            uid: cred.user.uid, email, displayName: username, friendCode: generateFriendCode(),
+                            avatarUrl: getAvatar(cred.user.uid), status: 'online', friends: [], blocked: [], bio: "Nový člen NexTalk", theme: 'dark', joinedAt: serverTimestamp(), isAdmin: false
+                        });
+                        setMode('await_verify');
+                    } else if (mode === 'login') {
+                        const cred = await signInWithEmailAndPassword(auth, email, password);
+                        if (!cred.user.emailVerified) { await signOut(auth); setMode('await_verify'); }
+                    } else if (mode === 'reset') {
+                        await sendPasswordResetEmail(auth, email);
+                        setSuccessMsg(`Odkaz odeslán na ${email}.`); setMode('login');
+                    }
+                } catch (err) { setError(err.message.replace('Firebase: ', '')); } finally { setLoading(false); }
+            };
+
+            return (
+                <div className="flex items-center justify-center min-h-screen relative overflow-hidden bg-[#0a0a0c]">
+                    <GlassCard className="w-full max-w-md p-8 z-10 mx-4 border-t border-white/10 relative">
+                        <div className="text-center mb-8">
+                            <h1 className="text-3xl font-black text-white mb-2">NexTalk</h1>
+                        </div>
+                        {mode === 'await_verify' ? (
+                            <div className="text-center space-y-6">
+                                <div className="bg-yellow-500/20 p-4 rounded-xl text-yellow-200">
+                                    <h3 className="font-bold text-lg">Ověř svůj email</h3>
+                                    <p className="text-sm font-bold mt-2 uppercase text-yellow-400 flex items-center justify-center gap-2"><AlertTriangle size={16}/> Zkontroluj složku SPAM!</p>
+                                </div>
+                                <Button className="w-full" onClick={() => window.location.reload()}>Už jsem ověřil</Button>
+                            </div>
+                        ) : (
+                            <form onSubmit={handleAuth} className="space-y-4">
+                                {mode === 'register' && <Input icon={User} placeholder="Uživatelské jméno" value={username} onChange={e => setUsername(e.target.value)} />}
+                                <Input icon={Mail} type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
+                                {mode !== 'reset' && <Input icon={Lock} type="password" placeholder="Heslo" value={password} onChange={e => setPassword(e.target.value)} />}
+                                {mode === 'login' && <div className="flex justify-end"><button type="button" onClick={() => setMode('reset')} className="text-xs text-[#7A4DFF]">Zapomněl jsi heslo?</button></div>}
+                                {successMsg && <div className="p-3 bg-green-500/20 text-green-400 text-sm rounded-lg text-center font-bold flex items-center justify-center gap-2"><CheckCircle size={16}/> {successMsg}</div>}
+                                {error && <div className="p-3 bg-red-500/20 text-red-400 text-sm rounded-lg text-center">{error}</div>}
+                                <Button loading={loading} className="w-full">{mode === 'login' ? 'Přihlásit se' : mode === 'register' ? 'Registrovat se' : 'Odeslat reset'}</Button>
+                                {mode !== 'reset' && <div className="text-center mt-4"><button type="button" onClick={() => {setMode(mode === 'login' ? 'register' : 'login'); setError("");}} className="text-sm text-white/50 hover:text-white">{mode === 'login' ? 'Nemáš účet? Registrace' : 'Máš účet? Přihlášení'}</button></div>}
+                            </form>
+                        )}
+                    </GlassCard>
+                </div>
+            );
+        };
+
+        // SETTINGS
+        const SettingsModal = ({ user, onClose }) => {
+            const [tab, setTab] = useState('appearance');
+            const [customColors, setCustomColors] = useState(user.customColors || { bgPrimary: '#000000', bgSecondary: '#111111', text: '#ffffff', accent: '#7A4DFF' });
+            const [newName, setNewName] = useState(user.displayName);
+            const [newBio, setNewBio] = useState(user.bio || "");
+            const [adminCode, setAdminCode] = useState("");
+
+            const saveTheme = async (theme) => { await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'users', user.uid), { theme }); };
+            const saveCustomColors = async () => { await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'users', user.uid), { theme: 'custom', customColors }); };
+            const handleSaveProfile = async () => { await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'users', user.uid), { displayName: newName, bio: newBio }); alert("Uloženo"); };
+            const handleUnblock = async (bid) => { await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'users', user.uid), { blocked: user.blocked.filter(id => id !== bid) }); };
+
+            const handleFileChange = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const mockUrl = await handleRealFileUpload(file);
+                await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'users', user.uid), { avatarUrl: mockUrl });
+            };
+
+            const activateAdmin = async () => {
+                if(user.email === ADMIN_EMAIL && adminCode === ADMIN_CODE) {
+                    await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'users', user.uid), { isAdmin: true });
+                    alert("Admin Tools Unlocked!");
+                    window.location.reload();
+                } else {
+                    alert("Nesprávný kód nebo email.");
+                }
+            };
+
+            return (
+                <Modal onClose={onClose} title="Nastavení">
+                    <div className="flex gap-6 min-h-[400px]">
+                        <div className="w-1/3 border-r border-[var(--border)] space-y-2">
+                            {['appearance', 'account', 'security', 'blocked'].map(t => (
+                                <button key={t} onClick={() => setTab(t)} className={`w-full text-left px-4 py-3 rounded-xl transition ${tab === t ? 'bg-[var(--accent)] text-white' : 'hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)]'}`}>
+                                    {t === 'appearance' ? 'Vzhled' : t === 'account' ? 'Účet' : t === 'security' ? 'Bezpečnost' : 'Blokovaní'}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="flex-1 space-y-6">
+                            {tab === 'appearance' && (
+                                <>
+                                    <h3 className="font-bold mb-2">Režim</h3>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        <div onClick={() => saveTheme('dark')} className={`h-20 bg-[#0f0f13] border-2 ${user.theme === 'dark' ? 'border-[var(--accent)]' : 'border-transparent'} rounded-xl flex items-center justify-center cursor-pointer text-white`}>Dark</div>
+                                        <div onClick={() => saveTheme('light')} className={`h-20 bg-[#f4f4f5] border-2 ${user.theme === 'light' ? 'border-[var(--accent)]' : 'border-transparent'} rounded-xl flex items-center justify-center cursor-pointer text-black`}>Light</div>
+                                        <div onClick={() => saveTheme('custom')} className={`h-20 bg-gradient-to-br from-purple-900 to-black border-2 ${user.theme === 'custom' ? 'border-[var(--accent)]' : 'border-transparent'} rounded-xl flex items-center justify-center cursor-pointer text-white`}>Custom</div>
+                                    </div>
+                                    {user.theme === 'custom' && (
+                                        <div className="space-y-3 mt-4">
+                                            <div><label className="text-xs">Pozadí (Main)</label><input type="color" className="w-full h-8" value={customColors.bgPrimary} onChange={e => setCustomColors({...customColors, bgPrimary: e.target.value})} /></div>
+                                            <div><label className="text-xs">Panely (Secondary)</label><input type="color" className="w-full h-8" value={customColors.bgSecondary} onChange={e => setCustomColors({...customColors, bgSecondary: e.target.value})} /></div>
+                                            <div><label className="text-xs">Text</label><input type="color" className="w-full h-8" value={customColors.text} onChange={e => setCustomColors({...customColors, text: e.target.value})} /></div>
+                                            <div><label className="text-xs">Akcent</label><input type="color" className="w-full h-8" value={customColors.accent} onChange={e => setCustomColors({...customColors, accent: e.target.value})} /></div>
+                                            <Button onClick={saveCustomColors} className="w-full">Uložit Barvy</Button>
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                            {tab === 'account' && (
+                                <>
+                                    <div className="flex items-center gap-4">
+                                        <div className="relative group cursor-pointer">
+                                            <img src={user.avatarUrl} className="w-20 h-20 rounded-full object-cover border-2 border-[var(--border)]" />
+                                            <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><Camera size={20} className="text-white"/></div>
+                                            <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={handleFileChange} />
+                                        </div>
+                                        <div><div className="font-bold text-lg">{user.displayName}</div><div className="text-xs text-[var(--accent)] font-mono">{user.friendCode}</div></div>
+                                    </div>
+                                    <Input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Jméno" />
+                                    <textarea className="w-full bg-[var(--bg-tertiary)] rounded-xl p-3 text-[var(--text-primary)] border border-[var(--border)] h-24 outline-none" value={newBio} onChange={e => setNewBio(e.target.value)} placeholder="Bio..." />
+                                    <Button onClick={handleSaveProfile}>Uložit</Button>
+                                </>
+                            )}
+                            {tab === 'security' && (
+                                <div className="space-y-4">
+                                    <div className="p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-xl text-sm text-yellow-200"><AlertTriangle size={16} className="inline mr-2"/>Zkontroluj SPAM složku!</div>
+                                    <Button variant="secondary" className="w-full justify-between">Změnit Email <ChevronRight size={16}/></Button>
+                                    <Button variant="secondary" className="w-full justify-between">Změnit Heslo <ChevronRight size={16}/></Button>
+                                    
+                                    {user.email === ADMIN_EMAIL && !user.isAdmin && (
+                                        <div className="mt-8 border-t border-[var(--border)] pt-4">
+                                            <h3 className="text-sm font-bold text-red-500 uppercase mb-2">Admin Zone</h3>
+                                            <div className="flex gap-2">
+                                                <Input type="password" placeholder="Admin Kód" value={adminCode} onChange={e => setAdminCode(e.target.value)} />
+                                                <Button variant="danger" onClick={activateAdmin}>Aktivovat</Button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            {tab === 'blocked' && (
+                                <div>
+                                    {user.blocked?.length === 0 && <div className="text-[var(--text-secondary)] text-center py-10">Nikdo není blokován</div>}
+                                    {user.blocked?.map(bid => (
+                                        <div key={bid} className="flex justify-between items-center p-3 bg-[var(--bg-tertiary)] rounded-xl mb-2">
+                                            <span className="font-mono text-sm">{bid}</span>
+                                            <Button variant="secondary" className="py-1 px-3 text-xs" onClick={() => handleUnblock(bid)}>Odblokovat</Button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </Modal>
+            );
+        };
+
+        // ADMIN DASHBOARD
+        const AdminDashboard = ({ user, allUsers, onExit }) => {
+            const [activeTab, setActiveTab] = useState('overview');
+            const [crews, setCrews] = useState([]);
+            const [posts, setPosts] = useState([]);
+            const [logs, setLogs] = useState([]);
+            const [ghostCrew, setGhostCrew] = useState(null);
+            const [selectedUser, setSelectedUser] = useState(null);
+            const [userHistory, setUserHistory] = useState({ msgs: [], posts: [], stories: [] });
+            const [newUserId, setNewUserId] = useState("");
+            
+            // New Admin Features State
+            const [systemMsg, setSystemMsg] = useState("");
+            const [ghostChannel, setGhostChannel] = useState("general");
+            const [ghostMessages, setGhostMessages] = useState([]);
+
+            useEffect(() => {
+                const u1 = onSnapshot(collection(db, 'artifacts', _appId, 'public', 'data', 'crews'), s => setCrews(s.docs.map(d => ({id: d.id, ...d.data()}))));
+                const u2 = onSnapshot(collection(db, 'artifacts', _appId, 'public', 'data', 'posts'), s => setPosts(s.docs.map(d => ({id: d.id, ...d.data()}))));
+                const u3 = onSnapshot(query(collection(db, 'artifacts', _appId, 'public', 'data', 'audit_log'), orderBy('createdAt', 'desc')), s => setLogs(s.docs.map(d => ({id: d.id, ...d.data()}))));
+                return () => { u1(); u2(); u3(); };
+            }, []);
+
+            // Ghost Messages Listener
+            useEffect(() => {
+                if(!ghostCrew) return;
+                const unsub = onSnapshot(query(collection(db, 'artifacts', _appId, 'public', 'data', 'crews', ghostCrew.id, 'channels', ghostChannel, 'messages'), orderBy('createdAt', 'asc')), snap => {
+                    setGhostMessages(snap.docs.map(d => ({id: d.id, ...d.data()})).filter(m => !m.deleted));
+                });
+                return () => unsub();
+            }, [ghostCrew, ghostChannel]);
+
+            const fetchUserHistory = async (uid) => {
+                const uPosts = posts.filter(p => p.authorId === uid);
+                setUserHistory({ posts: uPosts, msgs: [], stories: [] }); 
+                setSelectedUser(allUsers[uid]);
+                setNewUserId(allUsers[uid].friendCode);
+            };
+
+            const updateUserCode = async () => {
+                if(!selectedUser) return;
+                await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'users', selectedUser.uid), { friendCode: newUserId });
+                logAdminAction(`Changed ID for ${selectedUser.displayName} to ${newUserId}`);
+                alert("ID Změněno");
+            };
+
+            const banUser = async (uid) => {
+                await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'users', uid), { 
+                    banned: true, 
+                    bannedReason: "Porušení pravidel (Admin Action)" 
+                });
+                logAdminAction(`Banned user ${uid}`);
+                alert("Uživatel zabanován.");
+            };
+
+            const deleteContent = async (collectionName, id) => {
+                await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', collectionName, id), { deleted: true });
+                logAdminAction(`Deleted ${collectionName} ${id}`);
+            };
+            
+            const openGhostView = (crew) => {
+                setGhostCrew(crew);
+                setGhostChannel(crew.channels?.[0] || 'general');
+            };
+
+            // --- NEW ADMIN FEATURES ---
+            const toggleFreezeCrew = async (crew) => {
+                await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'crews', crew.id), { frozen: !crew.frozen });
+                logAdminAction(`Toggled freeze for crew ${crew.name}`);
+            };
+
+            const adminJoinCrew = async (crew) => {
+                if(crew.members.includes(user.uid)) return alert("Už jsi členem.");
+                await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'crews', crew.id), { members: arrayUnion(user.uid) });
+                alert("Připojen jako Admin.");
+            };
+
+            const postSystemAnnouncement = async (type) => {
+                if(!systemMsg) return;
+                const sysUser = {
+                    authorId: user.uid,
+                    authorName: "NexTalk (Official)",
+                    authorAvatar: "https://ui-avatars.com/api/?name=Nextalk&background=7A4DFF&color=fff&bold=true",
+                    createdAt: serverTimestamp()
+                };
+
+                if(type === 'post') {
+                    await addDoc(collection(db, 'artifacts', _appId, 'public', 'data', 'posts'), {
+                        ...sysUser, content: systemMsg, imageUrl: null, likes: [], comments: [], isSystem: true
+                    });
+                } else {
+                    // Story variant (simplified as text for now or would need image upload)
+                    await addDoc(collection(db, 'artifacts', _appId, 'public', 'data', 'stories'), {
+                        authorId: user.uid, imageUrl: `https://placehold.co/600x800/7A4DFF/ffffff?text=${encodeURIComponent(systemMsg)}`, createdAt: serverTimestamp(), viewers: [], isSystem: true
+                    });
+                }
+                setSystemMsg("");
+                alert("Oznámení odesláno všem.");
+            };
+
+            return (
+                <div className="h-full flex flex-col bg-[#111]">
+                    <div className="bg-red-900/20 border-b border-red-500/30 p-4 flex justify-between items-center">
+                        <h2 className="text-xl font-bold text-red-500 flex items-center gap-2"><Shield/> ADMIN GOD MODE</h2>
+                        <div className="flex gap-2">
+                            {['overview', 'users', 'crews', 'content'].map(t => (
+                                <button key={t} onClick={() => setActiveTab(t)} className={`px-3 py-1 rounded uppercase text-xs font-bold ${activeTab===t ? 'bg-red-600 text-white' : 'bg-red-900/40 text-red-300'}`}>{t}</button>
+                            ))}
+                        </div>
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                        {activeTab === 'overview' && (
+                            <div className="flex flex-col gap-6 h-full">
+                                <div className="flex justify-between items-center bg-[#1a1a1a] p-4 rounded-xl border border-white/10">
+                                    <div>
+                                        <h3 className="font-bold text-white">Rychlé Akce</h3>
+                                        <p className="text-xs text-gray-500">Základní ovládání admin panelu</p>
+                                    </div>
+                                    <Button variant="danger" onClick={onExit}>Vypnout Admin Tools</Button>
+                                </div>
+
+                                <div className="bg-[#1a1a1a] p-4 rounded-xl border border-white/10">
+                                    <h3 className="font-bold text-[var(--accent)] mb-2 flex items-center gap-2"><Radio size={16}/> NexTalk Oznámení (Global)</h3>
+                                    <p className="text-xs text-gray-500 mb-4">Tohle uvidí všichni uživatelé, i když NexTalk nemají v přátelích.</p>
+                                    <div className="flex gap-2">
+                                        <input value={systemMsg} onChange={e => setSystemMsg(e.target.value)} className="flex-1 bg-black/30 border border-white/10 rounded px-3 py-2 text-white" placeholder="Zpráva pro všechny..." />
+                                        <Button onClick={() => postSystemAnnouncement('post')} className="text-xs">Post</Button>
+                                        <Button onClick={() => postSystemAnnouncement('story')} variant="secondary" className="text-xs">Story</Button>
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-6 flex-1 min-h-0">
+                                    <div className="w-1/3 bg-[#1a1a1a] p-4 rounded-xl border border-white/10 overflow-y-auto">
+                                        <h3 className="font-bold text-red-400 mb-4 flex items-center gap-2"><Activity size={16}/> AUDIT LOG</h3>
+                                        <div className="space-y-2">
+                                            {logs.map(log => (
+                                                <div key={log.id} className="text-xs p-2 bg-white/5 rounded border-l-2 border-red-500">
+                                                    <div className="text-gray-400 mb-1">{new Date(log.createdAt?.toMillis()).toLocaleTimeString()}</div>
+                                                    {log.text}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div className="flex-1 bg-[#1a1a1a] p-4 rounded-xl border border-white/10 overflow-y-auto">
+                                        <h3 className="font-bold text-blue-400 mb-4 flex items-center gap-2"><Globe size={16}/> GLOBAL FEED</h3>
+                                        <div className="space-y-2">
+                                            {posts.map(p => (
+                                                <div key={p.id} className={`p-3 rounded border border-white/5 ${p.deleted ? 'bg-red-900/20 border-red-500/30' : 'bg-white/5'}`}>
+                                                    <div className="flex justify-between">
+                                                        <span className="text-sm font-bold text-gray-300">{p.authorName} {p.isSystem && <span className="bg-[var(--accent)] text-white text-[10px] px-1 rounded ml-1">OFFICIAL</span>}</span>
+                                                        {p.deleted && <span className="text-xs text-red-500">DELETED</span>}
+                                                    </div>
+                                                    <div className="text-sm text-gray-400 mt-1">{p.content}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'users' && (
+                            <div className="flex gap-6 h-full">
+                                <div className="w-1/3 space-y-2 overflow-y-auto">
+                                    {Object.values(allUsers).map(u => (
+                                        <div key={u.uid} onClick={() => fetchUserHistory(u.uid)} className={`flex justify-between items-center bg-[#1a1a1a] p-3 rounded border cursor-pointer hover:border-blue-500 ${selectedUser?.uid === u.uid ? 'border-blue-500 bg-blue-900/20' : 'border-white/10'}`}>
+                                            <div className="flex items-center gap-3">
+                                                <img src={u.avatarUrl} className="w-8 h-8 rounded-full"/>
+                                                <div>
+                                                    <div className="font-bold text-sm">{u.displayName}</div>
+                                                    <div className="text-xs font-mono text-gray-600">{u.friendCode}</div>
+                                                </div>
+                                            </div>
+                                            {u.banned ? <Skull size={16} className="text-red-500"/> : <div className="w-2 h-2 bg-green-500 rounded-full"/>}
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="flex-1 bg-[#1a1a1a] p-6 rounded-xl border border-white/10">
+                                    {selectedUser ? (
+                                        <>
+                                            <div className="flex items-center gap-4 mb-6 pb-6 border-b border-white/10">
+                                                <img src={selectedUser.avatarUrl} className="w-20 h-20 rounded-full"/>
+                                                <div className="flex-1">
+                                                    <h2 className="text-2xl font-bold">{selectedUser.displayName}</h2>
+                                                    <div className="text-sm text-gray-500">{selectedUser.email}</div>
+                                                    <div className="flex gap-2 mt-2">
+                                                        <Input value={newUserId} onChange={e => setNewUserId(e.target.value)} className="h-8 text-xs w-32" />
+                                                        <Button onClick={updateUserCode} className="h-8 py-0 px-3 text-xs">Změnit ID</Button>
+                                                        <Button onClick={() => banUser(selectedUser.uid)} variant="danger" className="h-8 py-0 px-3 text-xs">BAN</Button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <h3 className="font-bold mb-2">Historie Postů</h3>
+                                            <div className="space-y-2">
+                                                {userHistory.posts.map(p => (
+                                                    <div key={p.id} className={`p-2 rounded text-sm ${p.deleted ? 'bg-red-900/20 text-red-200' : 'bg-white/5'}`}>
+                                                        {p.content} {p.deleted && "(Smazáno)"}
+                                                    </div>
+                                                ))}
+                                                {userHistory.posts.length === 0 && <div className="text-gray-500 italic">Žádné posty.</div>}
+                                            </div>
+                                        </>
+                                    ) : <div className="flex items-center justify-center h-full text-gray-600">Vyber uživatele</div>}
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'crews' && (
+                            <div className="space-y-2">
+                                {crews.map(c => (
+                                    <div key={c.id} className={`flex justify-between items-center bg-[#1a1a1a] p-3 rounded border ${c.frozen ? 'border-red-500 bg-red-900/10' : 'border-white/10'}`}>
+                                        <div className="flex items-center gap-3">
+                                            <img src={c.icon} className="w-8 h-8 rounded"/>
+                                            <div>
+                                                <div className="font-bold flex items-center gap-2">
+                                                    {c.name} 
+                                                    {c.frozen && <PauseCircle size={14} className="text-red-500"/>}
+                                                </div>
+                                                <div className="text-xs text-gray-500 font-mono">ID: {c.id}</div>
+                                                <div className="text-xs text-gray-500">{c.members?.length} members</div>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <Button variant="secondary" className="py-1 px-2 text-xs" onClick={() => adminJoinCrew(c)} title="Rychlé připojení"><LogIn size={14}/></Button>
+                                            <Button variant="secondary" className="py-1 px-2 text-xs" onClick={() => openGhostView(c)} title="Ghost View"><Eye size={14}/></Button>
+                                            <Button variant="danger" className="py-1 px-2 text-xs" onClick={() => toggleFreezeCrew(c)} title="Pozastavit Crew">{c.frozen ? <PlayCircle size={14}/> : <PauseCircle size={14}/>}</Button>
+                                            <Button variant="danger" className="py-1 px-2 text-xs" onClick={() => deleteContent('crews', c.id)} title="Smazat">NUKE</Button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {ghostCrew && (
+                        <Modal title={`Ghost View: ${ghostCrew.name}`} onClose={() => setGhostCrew(null)}>
+                            <div className="h-96 flex flex-col md:flex-row gap-4">
+                                <div className="w-32 border-r border-white/10 space-y-1">
+                                    {ghostCrew.channels?.map(ch => (
+                                        <div key={ch} onClick={() => setGhostChannel(ch)} className={`px-2 py-1 rounded cursor-pointer text-sm ${ghostChannel === ch ? 'bg-[var(--accent)] text-white' : 'text-gray-400 hover:bg-white/5'}`}># {ch}</div>
+                                    ))}
+                                </div>
+                                <div className="flex-1 flex flex-col bg-black/20 rounded p-2 overflow-hidden">
+                                    <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar">
+                                        {ghostMessages.map(m => (
+                                            <div key={m.id} className="text-sm">
+                                                <span className="font-bold text-[var(--accent)]">{allUsers[m.authorId]?.displayName || 'Unknown'}:</span> <span className="text-gray-300">{m.text}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="mt-2 p-2 bg-red-900/20 text-red-400 text-xs text-center border-t border-red-500/30">Jsi v režimu Ghost. Nikdo tě nevidí.</div>
+                                </div>
+                            </div>
+                        </Modal>
+                    )}
+                </div>
+            );
+        };
+
+        // 2. CREWS (SERVERS)
+        const Crews = ({ user, allUsers }) => {
+            const [crews, setCrews] = useState([]);
+            const [selectedCrew, setSelectedCrew] = useState(null);
+            const [activeChannel, setActiveChannel] = useState('general');
+            const [showCreate, setShowCreate] = useState(false);
+            const [newCrewName, setNewCrewName] = useState("");
+            const [contextMenu, setContextMenu] = useState(null);
+            const [messages, setMessages] = useState([]);
+            const [msgText, setMsgText] = useState("");
+            const [manageModal, setManageModal] = useState(null);
+            const [newChannelName, setNewChannelName] = useState("");
+            const [attachment, setAttachment] = useState(null);
+            const [newChannelType, setNewChannelType] = useState("text");
+
+            useEffect(() => {
+                const unsub = onSnapshot(query(collection(db, 'artifacts', _appId, 'public', 'data', 'crews')), snap => {
+                    setCrews(snap.docs.map(d => ({id: d.id, ...d.data()})).filter(c => !c.deleted));
+                });
+                return () => unsub();
+            }, []);
+
+            useEffect(() => {
+                if(!selectedCrew) return;
+                const unsub = onSnapshot(query(collection(db, 'artifacts', _appId, 'public', 'data', 'crews', selectedCrew.id, 'channels', activeChannel, 'messages'), orderBy('createdAt', 'asc')), snap => {
+                    setMessages(snap.docs.map(d => ({id: d.id, ...d.data()})).filter(m => !m.deleted));
+                });
+                return () => unsub();
+            }, [selectedCrew, activeChannel]);
+
+            const handleCreate = async () => {
+                if(!newCrewName) return;
+                await addDoc(collection(db, 'artifacts', _appId, 'public', 'data', 'crews'), {
+                    name: newCrewName, owner: user.uid, icon: `https://ui-avatars.com/api/?name=${newCrewName}&background=random`,
+                    members: [user.uid], channels: ['general', 'announcements', 'voice'], frozen: false
+                });
+                setShowCreate(false); setNewCrewName("");
+            };
+
+            const handleAddChannel = async () => {
+                if(!newChannelName || !selectedCrew) return;
+                const newChannels = [...selectedCrew.channels, newChannelName];
+                await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'crews', selectedCrew.id), {
+                    channels: newChannels
+                });
+                setManageModal(null); setNewChannelName("");
+            };
+
+            const handleAttachment = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const url = await handleRealFileUpload(file);
+                setAttachment(url);
+            };
+
+            const sendMessage = async () => {
+                if(!msgText.trim() && !attachment) return;
+                if(selectedCrew.frozen) return; // Prevent sending if frozen
+                await addDoc(collection(db, 'artifacts', _appId, 'public', 'data', 'crews', selectedCrew.id, 'channels', activeChannel, 'messages'), {
+                    text: msgText, imageUrl: attachment, authorId: user.uid, createdAt: serverTimestamp()
+                });
+                setMsgText("");
+                setAttachment(null);
+            };
+
+            const handleContextMenu = (e, type, data) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, type, data }); };
+            
+            const handleMessageAction = async (action) => {
+                if(action === 'delete') {
+                    // Soft delete
+                    await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'crews', selectedCrew.id, 'channels', activeChannel, 'messages', contextMenu.data.id), { deleted: true });
+                } else if(action === 'copy') {
+                    navigator.clipboard.writeText(contextMenu.data.text);
+                }
+                setContextMenu(null);
+            };
+
+            const handleChannelAction = async (action) => {
+                if(action === 'delete') {
+                    const newCh = selectedCrew.channels.filter(c => c !== contextMenu.data);
+                    await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'crews', selectedCrew.id), { channels: newCh });
+                    if(activeChannel === contextMenu.data) setActiveChannel('general');
+                }
+                setContextMenu(null);
+            };
+
+            const handleLeave = async () => {
+                if(contextMenu.data.owner === user.uid) return alert("Jako zakladatel nemůžeš odejít. Musíš server smazat.");
+                if(contextMenu.data.frozen) return alert("Nelze opustit pozastavený server.");
+                const newMembers = contextMenu.data.members.filter(m => m !== user.uid);
+                await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'crews', contextMenu.data.id), { members: newMembers });
+                setSelectedCrew(null); setContextMenu(null);
+            };
+
+            const handleDeleteServer = async () => {
+                if(contextMenu.data.owner !== user.uid) return alert("Nejsi majitel!");
+                // Soft delete server
+                await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'crews', contextMenu.data.id), { deleted: true });
+                setContextMenu(null); setSelectedCrew(null);
+            };
+
+            return (
+                <div className="flex h-full bg-[var(--bg-primary)] justify-center">
+                    <div className="w-full max-w-4xl flex flex-col h-full">
+                        <div className="p-6 pb-2 text-center">
+                            <h2 className="text-2xl font-bold mb-4 text-[var(--text-primary)]">Crews</h2>
+                            <Button onClick={() => setShowCreate(true)} className="mb-6 w-full max-w-sm mx-auto">Vytvořit Crew</Button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto px-6 space-y-4 pb-20 custom-scrollbar">
+                            {crews.filter(c => c.members.includes(user.uid)).map(crew => (
+                                <div key={crew.id} className={`bg-[var(--bg-secondary)] border ${crew.frozen ? 'border-red-500/50' : 'border-[var(--border)]'} rounded-2xl overflow-hidden transition-all`}>
+                                    <div className={`p-4 flex items-center gap-4 cursor-pointer hover:bg-[var(--bg-tertiary)] ${selectedCrew?.id === crew.id ? 'bg-[var(--bg-tertiary)]' : ''}`} onClick={() => setSelectedCrew(selectedCrew?.id === crew.id ? null : crew)} onContextMenu={(e) => handleContextMenu(e, 'crew', crew)}>
+                                        <img src={crew.icon} className="w-14 h-14 rounded-xl object-cover"/>
+                                        <div className="flex-1">
+                                            <div className="font-bold text-lg text-[var(--text-primary)] flex items-center gap-2">
+                                                {crew.name}
+                                                {crew.frozen && <Lock size={16} className="text-red-500"/>}
+                                            </div>
+                                            <div className="text-sm text-[var(--text-secondary)]">{crew.members.length} členů</div>
+                                        </div>
+                                        <ChevronRight className={`transition-transform duration-300 text-[var(--text-secondary)] ${selectedCrew?.id === crew.id ? 'rotate-90' : ''}`}/>
+                                    </div>
+
+                                    {selectedCrew?.id === crew.id && (
+                                        <div className="border-t border-[var(--border)] bg-[var(--bg-primary)] animate-in slide-in-from-top-2 duration-200">
+                                            <div className="p-2 grid grid-cols-3 gap-2">
+                                                {crew.channels.map(ch => (
+                                                    <div key={ch} onClick={() => setActiveChannel(ch)} onContextMenu={(e) => handleContextMenu(e, 'channel', ch)} className={`p-3 rounded-xl flex items-center justify-center gap-2 cursor-pointer transition ${activeChannel === ch ? 'bg-[var(--accent)] text-white' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}>
+                                                        {ch === 'voice' ? <Volume2 size={16}/> : <Hash size={16}/>} {ch}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            
+                                            <div className="h-96 flex flex-col bg-[var(--bg-secondary)] m-2 rounded-xl border border-[var(--border)]">
+                                                <div className="p-3 border-b border-[var(--border)] font-bold text-[var(--text-primary)] flex items-center gap-2"><Hash size={16}/> {activeChannel}</div>
+                                                
+                                                {crew.frozen ? (
+                                                    <div className="flex-1 flex flex-col items-center justify-center text-red-500 space-y-2">
+                                                        <Lock size={48} />
+                                                        <div className="font-bold">SERVER POZASTAVEN ADMINEM</div>
+                                                    </div>
+                                                ) : (
+                                                    <>
+                                                        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                                                            {messages.map(msg => (
+                                                                <div key={msg.id} onContextMenu={(e) => handleContextMenu(e, 'message', msg)} className={`flex gap-3 ${msg.authorId === user.uid ? 'flex-row-reverse' : ''}`}>
+                                                                    <img src={allUsers[msg.authorId]?.avatarUrl} className="w-8 h-8 rounded-full mt-1"/>
+                                                                    <div className={`px-4 py-2 rounded-2xl max-w-[80%] text-sm ${msg.authorId === user.uid ? 'bg-[var(--msg-me)] text-white' : 'bg-[var(--msg-them)] text-[var(--text-primary)]'}`}>
+                                                                        {msg.imageUrl && <img src={msg.imageUrl} className="max-w-full rounded-lg mb-2 border border-white/10" />}
+                                                                        {msg.text}
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                        {attachment && (
+                                                            <div className="mx-4 mb-2 p-2 bg-[var(--bg-tertiary)] rounded-lg flex items-center gap-2 border border-[var(--accent)]">
+                                                                <div className="w-10 h-10 bg-black/50 rounded overflow-hidden"><img src={attachment} className="w-full h-full object-cover"/></div>
+                                                                <span className="text-xs text-[var(--text-secondary)] flex-1">Obrázek připraven</span>
+                                                                <button onClick={() => setAttachment(null)}><X size={16} className="text-red-400"/></button>
+                                                            </div>
+                                                        )}
+                                                        <div className="p-3 bg-[var(--bg-tertiary)] m-2 rounded-xl flex gap-2 items-center">
+                                                            <div className="relative group">
+                                                                <Paperclip size={20} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"/>
+                                                                <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={handleAttachment} />
+                                                            </div>
+                                                            <input value={msgText} onChange={e => setMsgText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendMessage()} placeholder={`Zpráva...`} className="bg-transparent flex-1 outline-none text-[var(--text-primary)]"/>
+                                                            <button onClick={sendMessage}><Send className="text-[var(--accent)]"/></button>
+                                                        </div>
+                                                    </>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {contextMenu && (
+                        <div className="fixed z-50 bg-[var(--bg-secondary)] border border-[var(--border)] shadow-xl rounded-lg w-48 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-100" style={{top: contextMenu.y, left: contextMenu.x}}>
+                            {contextMenu.type === 'crew' && (
+                                <>
+                                    <div className="px-4 py-2 border-b border-[var(--border)] font-bold text-sm text-[var(--text-primary)]">{contextMenu.data.name}</div>
+                                    {!contextMenu.data.frozen && <button className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--bg-tertiary)] text-[var(--text-primary)]" onClick={() => { setManageModal('players'); setContextMenu(null); }}>Hráči</button>}
+                                    {contextMenu.data.owner === user.uid && <button className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--bg-tertiary)] text-[var(--text-primary)]" onClick={() => { setManageModal('manage'); setContextMenu(null); }}>Spravovat</button>}
+                                    <button className={`w-full text-left px-4 py-2 text-sm hover:bg-[var(--bg-tertiary)] text-red-400 ${contextMenu.data.frozen ? 'opacity-50 cursor-not-allowed' : ''}`} onClick={handleLeave}>Opustit</button>
+                                    {contextMenu.data.owner === user.uid && <button onClick={handleDeleteServer} className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--bg-tertiary)] text-red-500 font-bold">Odstranit</button>}
+                                </>
+                            )}
+                            {contextMenu.type === 'channel' && (
+                                <>
+                                    <div className="px-4 py-2 border-b border-[var(--border)] font-bold text-sm text-[var(--text-primary)]">#{contextMenu.data}</div>
+                                    {selectedCrew.owner === user.uid && (
+                                        <>
+                                            <button className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--bg-tertiary)] text-[var(--text-primary)]">Přejmenovat</button>
+                                            <button className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--bg-tertiary)] text-red-400" onClick={() => handleChannelAction('delete')}>Odstranit</button>
+                                        </>
+                                    )}
+                                </>
+                            )}
+                            {contextMenu.type === 'message' && (
+                                <>
+                                    <button className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--bg-tertiary)] text-[var(--text-primary)]" onClick={() => handleMessageAction('copy')}>Kopírovat</button>
+                                    <button className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--bg-tertiary)] text-red-400" onClick={() => handleMessageAction('delete')}>Vymazat</button>
+                                </>
+                            )}
+                            <div className="fixed inset-0 -z-10" onClick={() => setContextMenu(null)}></div>
+                        </div>
+                    )}
+
+                    {showCreate && (
+                        <Modal title="Vytvořit Crew" onClose={() => setShowCreate(false)}>
+                            <div className="space-y-4">
+                                <Input placeholder="Název Crew" value={newCrewName} onChange={e => setNewCrewName(e.target.value)} />
+                                <Button onClick={handleCreate} className="w-full">Vytvořit svět</Button>
+                            </div>
+                        </Modal>
+                    )}
+                    {manageModal === 'manage' && (
+                        <Modal title={`Správa: ${selectedCrew?.name}`} onClose={() => setManageModal(null)}>
+                            <div className="space-y-4">
+                                <div className="text-sm opacity-50 uppercase">Vytvořit Kanál</div>
+                                <div className="flex gap-2">
+                                    <Input placeholder="Název kanálu" value={newChannelName} onChange={e => setNewChannelName(e.target.value)} />
+                                    <select className="bg-[var(--bg-tertiary)] text-[var(--text-primary)] rounded-xl px-2 outline-none border border-[var(--border)]" value={newChannelType} onChange={e => setNewChannelType(e.target.value)}>
+                                        <option value="text">Text</option>
+                                        <option value="voice">Hlas</option>
+                                    </select>
+                                </div>
+                                <Button onClick={handleAddChannel} className="w-full">Přidat</Button>
+                            </div>
+                        </Modal>
+                    )}
+                    {manageModal === 'players' && (
+                        <Modal title="Seznam hráčů" onClose={() => setManageModal(null)}>
+                            <div className="space-y-2">
+                                {selectedCrew?.members?.map(mid => (
+                                    <div key={mid} className="flex items-center gap-2 p-2 rounded hover:bg-[var(--bg-tertiary)] text-[var(--text-primary)]">
+                                        <img src={allUsers[mid]?.avatarUrl} className="w-8 h-8 rounded-full"/>
+                                        <span>{allUsers[mid]?.displayName}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </Modal>
+                    )}
+                </div>
+            );
+        };
+
+        // 3. FRIENDS
+        const FriendsView = ({ currentUser, allUsers }) => {
+            const [friendCode, setFriendCode] = useState("");
+            const [showAdd, setShowAdd] = useState(false);
+            const [activeChat, setActiveChat] = useState(null);
+            const [contextMenu, setContextMenu] = useState(null);
+            const [showProfile, setShowProfile] = useState(null);
+            const [chatMsgs, setChatMsgs] = useState([]);
+            const [text, setText] = useState("");
+            const [isTyping, setIsTyping] = useState(false);
+
+            const friends = currentUser.friends?.map(uid => ({uid, ...allUsers[uid]})).filter(u => u.displayName) || [];
+
+            useEffect(() => {
+                if(!activeChat) return;
+                const unsub = onSnapshot(query(collection(db, 'artifacts', _appId, 'public', 'data', 'messages'), orderBy('createdAt', 'asc')), snap => {
+                    const msgs = snap.docs.map(d => ({id: d.id, ...d.data()})).filter(m => (m.from === currentUser.uid && m.to === activeChat.uid) || (m.from === activeChat.uid && m.to === currentUser.uid));
+                    setChatMsgs(msgs);
+                    if(msgs.length > 0 && msgs[msgs.length-1].from === currentUser.uid) {
+                        setIsTyping(true); setTimeout(() => setIsTyping(false), 2000);
+                    }
+                });
+                return () => unsub();
+            }, [activeChat]);
+
+            const sendMessage = async () => {
+                if(!text.trim()) return;
+                await addDoc(collection(db, 'artifacts', _appId, 'public', 'data', 'messages'), { from: currentUser.uid, to: activeChat.uid, text, createdAt: serverTimestamp() });
+                setText("");
+            };
+
+            const addFriend = async () => {
+                const target = Object.values(allUsers).find(u => u.friendCode === friendCode);
+                if(target) {
+                    await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'users', currentUser.uid), { friends: [...currentUser.friends, target.uid] });
+                    sendNotificationEmail(target.email, "Nová žádost", "Žádost o přátelství", `${currentUser.displayName} si tě přidal!`);
+                    setShowAdd(false);
+                } else alert("Nenalezen");
+            };
+
+            const handleBlock = async (uid) => {
+                await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'users', currentUser.uid), { blocked: [...currentUser.blocked, uid] });
+                setContextMenu(null);
+            };
+
+            if(activeChat) {
+                return (
+                    <div className="flex flex-col h-full bg-[var(--bg-primary)]">
+                        <div className="h-16 border-b border-[var(--border)] flex items-center px-6 gap-4 bg-[var(--bg-secondary)]">
+                            <button onClick={() => setActiveChat(null)}><ChevronLeft className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]"/></button>
+                            <img src={activeChat.avatarUrl} className="w-10 h-10 rounded-full"/>
+                            <div className="font-bold text-[var(--text-primary)]">{activeChat.displayName}</div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-6 space-y-2">
+                            {chatMsgs.map(m => (
+                                <div key={m.id} className={`flex gap-2 items-end ${m.from === currentUser.uid ? 'justify-end' : 'justify-start'}`}>
+                                    {m.from !== currentUser.uid && <img src={activeChat.avatarUrl} className="w-6 h-6 rounded-full mb-1"/>}
+                                    <div className={`px-4 py-2 rounded-2xl max-w-[70%] text-sm ${m.from === currentUser.uid ? 'bg-[var(--msg-me)] text-white' : 'bg-[var(--msg-them)] text-[var(--text-primary)]'}`}>
+                                        {m.text}
+                                    </div>
+                                </div>
+                            ))}
+                            {isTyping && (
+                                <div className="flex gap-2 items-end">
+                                    <img src={activeChat.avatarUrl} className="w-6 h-6 rounded-full mb-1"/>
+                                    <div className="px-4 py-3 rounded-2xl bg-[var(--msg-them)] flex gap-1 items-center h-9">
+                                        <div className="w-1.5 h-1.5 bg-[var(--text-secondary)] rounded-full typing-dot"></div>
+                                        <div className="w-1.5 h-1.5 bg-[var(--text-secondary)] rounded-full typing-dot"></div>
+                                        <div className="w-1.5 h-1.5 bg-[var(--text-secondary)] rounded-full typing-dot"></div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        <div className="p-4"><div className="bg-[var(--bg-tertiary)] rounded-full flex items-center p-1 px-2 border border-[var(--border)]"><input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendMessage()} className="bg-transparent flex-1 px-4 py-2 text-[var(--text-primary)] outline-none" placeholder="Zpráva..." /><button onClick={sendMessage} className="p-2 rounded-full bg-[var(--msg-me)] text-white"><Send size={18}/></button></div></div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="p-8 h-full overflow-y-auto bg-[var(--bg-primary)]">
+                    <div className="flex justify-between items-center mb-6">
+                        <div className="flex-1 max-w-2xl relative">
+                            <Search className="absolute left-3 top-3 text-[var(--text-secondary)] w-5 h-5" />
+                            <input placeholder="Hledat konverzace..." className="w-full bg-[var(--bg-secondary)] text-[var(--text-primary)] text-sm rounded-xl pl-10 pr-4 py-3 focus:outline-none border border-[var(--border)] focus:border-[var(--accent)] transition" />
+                        </div>
+                        <Button onClick={() => setShowAdd(true)} className="ml-4"><UserPlus size={18} className="inline mr-2"/> Přidat</Button>
+                    </div>
+
+                    <div className="text-xs font-bold text-[var(--text-secondary)] uppercase mb-4 tracking-wider">Seznam přátel</div>
+                    <div className="space-y-2">
+                        {friends.map(friend => (
+                            <div key={friend.uid} className="bg-[var(--bg-secondary)] border border-[var(--border)] p-4 rounded-xl flex items-center gap-4 hover:border-[var(--accent)] transition group">
+                                <div className="relative">
+                                    <img src={friend.avatarUrl} className="w-12 h-12 rounded-full bg-[var(--bg-tertiary)]"/>
+                                    <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-[var(--bg-secondary)]"></div>
+                                </div>
+                                <div className="flex-1">
+                                    <div className="font-bold text-[var(--text-primary)]">{friend.displayName}</div>
+                                    <div className="text-xs text-[var(--text-secondary)]">Online</div>
+                                </div>
+                                <div className="flex items-center gap-4 opacity-80">
+                                    <button onClick={() => setActiveChat(friend)} className="text-[var(--accent)] font-bold text-sm hover:underline">Chat</button>
+                                    <button className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]"><Phone size={20}/></button>
+                                    <div className="relative">
+                                        <button onClick={() => setContextMenu(friend.uid)} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]"><MoreVertical size={20}/></button>
+                                        {contextMenu === friend.uid && (
+                                            <div className="absolute right-0 top-full mt-2 w-40 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg shadow-xl z-50 py-1" onMouseLeave={() => setContextMenu(null)}>
+                                                <button className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--bg-tertiary)] text-[var(--text-primary)]">Zobrazit profil</button>
+                                                <button className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--bg-tertiary)] text-red-400">Odstranit přítele</button>
+                                                <button className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--bg-tertiary)] text-red-400">Zablokovat</button>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {showAdd && (
+                        <Modal title="Přidat přítele" onClose={() => setShowAdd(false)}>
+                            <div className="space-y-4">
+                                <div className="bg-[var(--bg-tertiary)] p-4 rounded text-center"><div className="text-sm text-[var(--text-secondary)]">Tvůj kód</div><div className="text-xl font-mono text-[var(--accent)]">{currentUser.friendCode}</div></div>
+                                <Input placeholder="Kód přítele (ABC-012345)" value={friendCode} onChange={e => setFriendCode(e.target.value)} />
+                                <Button onClick={addFriend} className="w-full">Odeslat žádost</Button>
+                            </div>
+                        </Modal>
+                    )}
+
+                    {showProfile && (
+                        <Modal title="Profil" onClose={() => setShowProfile(null)}>
+                            <div className="text-center">
+                                <img src={showProfile.avatarUrl} className="w-24 h-24 rounded-full mx-auto mb-4 border-4 border-[var(--bg-tertiary)]"/>
+                                <h2 className="text-xl font-bold text-[var(--text-primary)]">{showProfile.displayName}</h2>
+                                <div className="text-[var(--text-secondary)] font-mono mb-4">{showProfile.friendCode}</div>
+                                <p className="bg-[var(--bg-tertiary)] p-3 rounded-xl text-[var(--text-primary)]">{showProfile.bio || "Žádné bio."}</p>
+                            </div>
+                        </Modal>
+                    )}
+                </div>
+            );
+        };
+
+        // 4. FEED
+        const Feed = ({ user, allUsers }) => {
+            const [posts, setPosts] = useState([]);
+            const [stories, setStories] = useState([]);
+            const [newPostText, setNewPostText] = useState("");
+            const [viewingStory, setViewingStory] = useState(null);
+            const [notifications, setNotifications] = useState(0);
+            const [commentInput, setCommentInput] = useState({});
+            const [showComments, setShowComments] = useState({});
+            const [storyReply, setStoryReply] = useState("");
+
+            useEffect(() => {
+                const q1 = query(collection(db, 'artifacts', _appId, 'public', 'data', 'posts'), orderBy('createdAt', 'desc'));
+                const unsub = onSnapshot(q1, snap => setPosts(snap.docs.map(d => ({id: d.id, ...d.data()})).filter(p => !p.deleted)));
+                
+                const q2 = query(collection(db, 'artifacts', _appId, 'public', 'data', 'stories'), orderBy('createdAt', 'desc'));
+                const unsubStories = onSnapshot(q2, snap => {
+                    const now = Date.now();
+                    const validStories = snap.docs.map(d => ({id: d.id, ...d.data()})).filter(s => {
+                        if (s.deleted) return false; // Filter deleted stories
+                        if (!s.createdAt) return false;
+                        const time = s.createdAt.toMillis();
+                        return (now - time) < (24 * 60 * 60 * 1000);
+                    });
+
+                    const grouped = validStories.reduce((acc, s) => {
+                        if(!acc[s.authorId]) acc[s.authorId] = [];
+                        acc[s.authorId].push(s);
+                        return acc;
+                    }, {});
+                    setStories(grouped);
+                });
+                
+                return () => { unsub(); unsubStories(); };
+            }, []);
+
+            const handleUpload = async (e, type) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const url = await handleRealFileUpload(file);
+                
+                if (type === 'story') {
+                    await addDoc(collection(db, 'artifacts', _appId, 'public', 'data', 'stories'), {
+                        authorId: user.uid, imageUrl: url, createdAt: serverTimestamp(), viewers: []
+                    });
+                } else {
+                    await addDoc(collection(db, 'artifacts', _appId, 'public', 'data', 'posts'), {
+                        authorId: user.uid, authorName: user.displayName, authorAvatar: user.avatarUrl,
+                        content: newPostText, imageUrl: url, likes: [], comments: [], createdAt: serverTimestamp()
+                    });
+                    setNewPostText("");
+                }
+            };
+
+            const handlePost = async () => {
+                if(!newPostText) return;
+                await addDoc(collection(db, 'artifacts', _appId, 'public', 'data', 'posts'), {
+                        authorId: user.uid, authorName: user.displayName, authorAvatar: user.avatarUrl,
+                        content: newPostText, imageUrl: null, likes: [], comments: [], createdAt: serverTimestamp()
+                });
+                setNewPostText("");
+            };
+
+            const handleDeletePost = async (pid) => { await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'posts', pid), { deleted: true }); };
+
+            const toggleLike = async (post) => {
+                const postRef = doc(db, 'artifacts', _appId, 'public', 'data', 'posts', post.id);
+                let newLikes = post.likes || [];
+                if (newLikes.includes(user.uid)) newLikes = newLikes.filter(id => id !== user.uid);
+                else newLikes.push(user.uid);
+                await updateDoc(postRef, { likes: newLikes });
+            };
+
+            const sendComment = async (postId) => {
+                if (!commentInput[postId]) return;
+                const postRef = doc(db, 'artifacts', _appId, 'public', 'data', 'posts', postId);
+                const newComment = {
+                    id: crypto.randomUUID(), // Native UUID
+                    uid: user.uid,
+                    text: commentInput[postId],
+                    createdAt: Date.now()
+                };
+                const post = posts.find(p => p.id === postId);
+                const currentComments = post.comments || [];
+                await updateDoc(postRef, { comments: [...currentComments, newComment] });
+                setCommentInput({...commentInput, [postId]: ""});
+            };
+            
+            const deleteComment = async (postId, commentId) => {
+                const postRef = doc(db, 'artifacts', _appId, 'public', 'data', 'posts', postId);
+                const post = posts.find(p => p.id === postId);
+                const currentComments = post.comments || [];
+                const updatedComments = currentComments.filter(c => c.id !== commentId);
+                await updateDoc(postRef, { comments: updatedComments });
+            };
+
+            const openStory = async (uid, list) => {
+                const story = list[0];
+                setViewingStory({ uid, index: 0, list });
+                if (story.authorId !== user.uid && !story.viewers?.includes(user.uid)) {
+                    const storyRef = doc(db, 'artifacts', _appId, 'public', 'data', 'stories', story.id);
+                    await updateDoc(storyRef, { viewers: arrayUnion(user.uid) });
+                }
+            };
+
+            const deleteStory = async () => {
+                const currentStory = viewingStory.list[viewingStory.index];
+                if (currentStory.authorId !== user.uid) return;
+                // Soft delete story
+                await updateDoc(doc(db, 'artifacts', _appId, 'public', 'data', 'stories', currentStory.id), { deleted: true });
+                setViewingStory(null);
+            };
+
+            const replyToStory = async () => {
+                if (!storyReply.trim()) return;
+                const currentStory = viewingStory.list[viewingStory.index];
+                await addDoc(collection(db, 'artifacts', _appId, 'public', 'data', 'messages'), { 
+                    from: user.uid, 
+                    to: currentStory.authorId, 
+                    text: `Reagoval na story: ${storyReply}`, 
+                    createdAt: serverTimestamp() 
+                });
+                setStoryReply("");
+                alert("Odesláno!");
+            };
+
+            const toggleViewers = (story) => {
+                if (story.authorId !== user.uid) return;
+                const names = story.viewers?.map(vUid => allUsers[vUid]?.displayName).filter(Boolean).join(", ") || "Nikdo";
+                alert(`Viděli to: ${names}`);
+            };
+
+            return (
+                <div className="h-full overflow-y-auto p-8 bg-[var(--bg-primary)]">
+                    <div className="max-w-2xl mx-auto space-y-8">
+                        <div className="flex justify-between items-center">
+                            <h2 className="text-2xl font-bold text-[var(--text-primary)]">Feed</h2>
+                            {/* Bell Removed */}
+                        </div>
+
+                        <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
+                            <div className="flex flex-col items-center gap-2 cursor-pointer group relative flex-shrink-0">
+                                <div className="w-[70px] h-[70px] rounded-full border-2 border-dashed border-[var(--text-secondary)] flex items-center justify-center bg-[var(--bg-secondary)] overflow-hidden relative group-hover:border-[var(--accent)] transition">
+                                    <Plus className="text-[var(--text-secondary)]"/>
+                                    <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={e => handleUpload(e, 'story')} />
+                                </div>
+                                <span className="text-xs text-[var(--text-secondary)]">Přidat</span>
+                            </div>
+                            {Object.entries(stories).map(([uid, list]) => {
+                                const hasUnseen = list.some(s => !s.viewers?.includes(user.uid));
+                                const isSystem = list[0].isSystem;
+                                return (
+                                    <div key={uid} className="flex flex-col items-center gap-2 cursor-pointer flex-shrink-0" onClick={() => openStory(uid, list)}>
+                                        <div className={`p-[2px] rounded-full ${isSystem ? 'bg-[var(--accent)]' : (hasUnseen ? 'story-ring-new' : 'story-ring-seen')}`}>
+                                            <div className="p-[2px] bg-[var(--bg-primary)] rounded-full">
+                                                <img src={isSystem ? list[0].imageUrl : allUsers[uid]?.avatarUrl} className="w-[62px] h-[62px] rounded-full object-cover"/>
+                                            </div>
+                                        </div>
+                                        <span className="text-xs truncate w-16 text-center text-[var(--text-primary)]">{isSystem ? "NexTalk" : allUsers[uid]?.displayName}</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        <GlassCard className="p-6 rounded-2xl">
+                            <div className="flex gap-4">
+                                <img src={user.avatarUrl} className="w-12 h-12 rounded-full"/>
+                                <div className="flex-1 space-y-3">
+                                    <textarea value={newPostText} onChange={e => setNewPostText(e.target.value)} placeholder="Co se děje?" className="w-full bg-transparent text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none resize-none"/>
+                                    <div className="flex justify-between pt-2 border-t border-[var(--border)]">
+                                        <div className="relative overflow-hidden group">
+                                            <button className="flex items-center gap-2 text-[var(--accent)] text-sm hover:bg-[var(--bg-tertiary)] px-3 py-1 rounded-lg transition"><ImageIcon size={16}/> Fotka</button>
+                                            <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={e => handleUpload(e, 'post')} />
+                                        </div>
+                                        <Button onClick={handlePost} className="py-1 px-4 text-sm">Post</Button>
+                                    </div>
+                                </div>
+                            </div>
+                        </GlassCard>
+
+                        <div className="space-y-6 pb-20">
+                            {posts.map(p => (
+                                <GlassCard key={p.id} className={`p-0 rounded-2xl overflow-hidden ${p.isSystem ? 'border border-[var(--accent)] shadow-[0_0_15px_rgba(122,77,255,0.2)]' : ''}`}>
+                                    <div className="p-5">
+                                        <div className="flex justify-between mb-4">
+                                            <div className="flex gap-3">
+                                                <img src={p.authorAvatar} className="w-10 h-10 rounded-full"/>
+                                                <div>
+                                                    <div className="font-bold text-[var(--text-primary)] flex items-center gap-2">
+                                                        {p.authorName} 
+                                                        {p.isSystem && <span className="bg-[var(--accent)] text-white text-[10px] px-2 py-0.5 rounded-full">OFFICIAL</span>}
+                                                    </div>
+                                                    <div className="text-xs text-[var(--text-secondary)]">Nyní</div>
+                                                </div>
+                                            </div>
+                                            {p.authorId === user.uid && <button onClick={(e) => { e.stopPropagation(); handleDeletePost(p.id); }} className="text-[var(--text-secondary)] hover:text-red-400"><Trash2 size={18}/></button>}
+                                        </div>
+                                        <p className="mb-4 text-[var(--text-primary)] opacity-90">{p.content}</p>
+                                        {p.imageUrl && <img src={p.imageUrl} className="w-full rounded-xl mb-4 max-h-[500px] object-cover"/>}
+                                        <div className="flex items-center gap-1 text-xs text-[var(--text-secondary)]">
+                                            <Heart size={12} fill={p.likes?.includes(user.uid) ? "currentColor" : "none"} className={p.likes?.includes(user.uid) ? "text-red-500" : ""}/> 
+                                            {p.likes?.length || 0}
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="bg-black/20 p-3 px-6 flex gap-6 border-t border-[var(--border)]">
+                                        <button onClick={() => toggleLike(p)} className={`flex items-center gap-2 text-sm transition ${p.likes?.includes(user.uid) ? 'text-red-500' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}>
+                                            <Heart size={18} fill={p.likes?.includes(user.uid) ? "currentColor" : "none"}/> Like
+                                        </button>
+                                        <button onClick={() => setShowComments({...showComments, [p.id]: !showComments[p.id]})} className="flex items-center gap-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+                                            <MessageCircle size={18}/> Komentáře ({p.comments?.length || 0})
+                                        </button>
+                                    </div>
+
+                                    {showComments[p.id] && (
+                                        <div className="p-4 bg-[var(--bg-tertiary)] border-t border-[var(--border)]">
+                                            <div className="space-y-3 mb-4 max-h-40 overflow-y-auto custom-scrollbar">
+                                                {p.comments?.map((c, idx) => (
+                                                    <div key={idx} className="flex gap-2 justify-between group">
+                                                        <div className="flex gap-2">
+                                                            <span className="font-bold text-xs text-[var(--accent)]">{allUsers[c.uid]?.displayName}:</span>
+                                                            <span className="text-xs text-[var(--text-primary)]">{c.text}</span>
+                                                        </div>
+                                                        {(c.uid === user.uid || p.authorId === user.uid) && (
+                                                            <button onClick={() => deleteComment(p.id, c.id)} className="text-[var(--text-secondary)] hover:text-red-400 opacity-0 group-hover:opacity-100 transition"><Trash2 size={12}/></button>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                                {(!p.comments || p.comments.length === 0) && <div className="text-xs text-[var(--text-secondary)]">Žádné komentáře.</div>}
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <input 
+                                                    className="flex-1 bg-[var(--bg-secondary)] rounded-lg px-3 py-1 text-sm outline-none text-[var(--text-primary)]"
+                                                    placeholder="Napiš komentář..."
+                                                    value={commentInput[p.id] || ""}
+                                                    onChange={e => setCommentInput({...commentInput, [p.id]: e.target.value})}
+                                                    onKeyDown={e => e.key === 'Enter' && sendComment(p.id)}
+                                                />
+                                                <button onClick={() => sendComment(p.id)} className="text-[var(--accent)]"><Send size={16}/></button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </GlassCard>
+                            ))}
+                        </div>
+                    </div>
+
+                    {viewingStory && (
+                        <div className="fixed inset-0 z-50 bg-black flex items-center justify-center" onClick={() => setViewingStory(null)}>
+                            <div className="w-full max-w-md h-full md:h-[80vh] bg-[#1a1a1a] relative md:rounded-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+                                <div className="absolute top-0 left-0 right-0 z-10 p-4 bg-gradient-to-b from-black/80">
+                                    <div className="flex gap-1 h-1 mb-2">
+                                        {viewingStory.list.map((_, i) => <div key={i} className={`flex-1 rounded-full ${i === viewingStory.index ? 'bg-white animate-progress' : 'bg-white/20'}`}></div>)}
+                                    </div>
+                                    <div className="flex gap-2 items-center text-white justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <img src={viewingStory.list[viewingStory.index].isSystem ? viewingStory.list[viewingStory.index].imageUrl : allUsers[viewingStory.uid]?.avatarUrl} className="w-8 h-8 rounded-full"/>
+                                            <span className="font-bold">{viewingStory.list[viewingStory.index].isSystem ? "NexTalk (Official)" : allUsers[viewingStory.uid]?.displayName}</span>
+                                        </div>
+                                        <button onClick={() => setViewingStory(null)}><X className="text-white"/></button>
+                                    </div>
+                                </div>
+                                <div className="flex-1 relative">
+                                    <img src={viewingStory.list[viewingStory.index].imageUrl} className="w-full h-full object-cover"/>
+                                </div>
+                                
+                                <div className="absolute bottom-0 w-full p-4 bg-gradient-to-t from-black/90 flex items-center justify-between gap-4">
+                                    {viewingStory.uid === user.uid ? (
+                                        <>
+                                            <button onClick={() => toggleViewers(viewingStory.list[viewingStory.index])} className="flex items-center gap-2 text-white/80 hover:text-white">
+                                                <Eye size={20}/> <span className="text-sm">{viewingStory.list[viewingStory.index].viewers?.length || 0}</span>
+                                            </button>
+                                            <button onClick={deleteStory} className="text-red-400 hover:text-red-300"><Trash2 size={20}/></button>
+                                        </>
+                                    ) : (
+                                        <div className="flex-1 flex gap-2">
+                                            <input 
+                                                className="flex-1 bg-white/10 rounded-full px-4 py-2 text-white outline-none placeholder-white/50 border border-white/10"
+                                                placeholder="Odpovědět..."
+                                                value={storyReply}
+                                                onChange={e => setStoryReply(e.target.value)}
+                                                onKeyDown={e => e.key === 'Enter' && replyToStory()}
+                                            />
+                                            <button onClick={replyToStory} className="p-2 bg-[var(--accent)] rounded-full text-white"><Send size={18}/></button>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [allUsers, setAllUsers] = useState({});
+            const [view, setView] = useState('feed');
+            const [showSettings, setShowSettings] = useState(false);
+
+            useEffect(() => {
+                let unsubSnapshot = null; // Store snapshot unsubscribe
+
+                const unsubAuth = onAuthStateChanged(auth, async (u) => {
+                    if (u) {
+                        // Kill previous snapshot listener if exists
+                        if (unsubSnapshot) unsubSnapshot();
+
+                        const userDocRef = doc(db, 'artifacts', _appId, 'public', 'data', 'users', u.uid);
+                        
+                        unsubSnapshot = onSnapshot(userDocRef, async (docSnap) => {
+                            if (docSnap.exists()) {
+                                const data = docSnap.data();
+                                // --- MIGRATION: Fix old friend codes ---
+                                const codeRegex = /^[A-Z]{3}-\d{6}$/;
+                                if (!data.friendCode || !codeRegex.test(data.friendCode)) {
+                                    console.log("Migrating old friend code...");
+                                    const newCode = generateFriendCode();
+                                    await updateDoc(userDocRef, { friendCode: newCode });
+                                    data.friendCode = newCode;
+                                }
+                                setUser({...data, isVerified: u.emailVerified});
+                            } else {
+                                // --- SELF HEALING ---
+                                // If Auth works but Firestore profile is missing (e.g. app version change), recreate it.
+                                try {
+                                    await setDoc(userDocRef, {
+                                        uid: u.uid,
+                                        email: u.email,
+                                        displayName: u.displayName || u.email.split('@')[0],
+                                        friendCode: generateFriendCode(),
+                                        avatarUrl: getAvatar(u.uid),
+                                        status: 'online',
+                                        friends: [],
+                                        blocked: [],
+                                        bio: "Welcome to NexTalk",
+                                        theme: 'dark',
+                                        joinedAt: serverTimestamp()
+                                    });
+                                } catch (e) {
+                                    console.error("Auto-recovery failed:", e);
+                                    // Fallback to minimal user to allow app entry
+                                    setUser({
+                                        uid: u.uid,
+                                        email: u.email,
+                                        displayName: 'User',
+                                        friendCode: '####',
+                                        avatarUrl: '',
+                                        status: 'online',
+                                        friends: [],
+                                        isVerified: u.emailVerified
+                                    });
+                                }
+                            }
+                        });
+                    } else {
+                        if (unsubSnapshot) unsubSnapshot();
+                        setUser(null);
+                    }
+                });
+                return () => {
+                    unsubAuth();
+                    if (unsubSnapshot) unsubSnapshot();
+                };
+            }, []);
+
+            useEffect(() => {
+                const unsub = onSnapshot(collection(db, 'artifacts', _appId, 'public', 'data', 'users'), s => { const m = {}; s.forEach(d => m[d.id] = {uid: d.id, ...d.data()}); setAllUsers(m); });
+                return () => unsub();
+            }, []);
+
+            if (!user) return <AuthScreen onLogin={() => {}} />;
+
+            return (
+                <div className="flex h-screen overflow-hidden">
+                    <ThemeInjector theme={user.theme} customColors={user.customColors} />
+                    <nav className="w-20 bg-[var(--bg-secondary)] border-r border-[var(--border)] flex flex-col items-center py-6 gap-6 z-20">
+                        <div className="w-12 h-12 bg-gradient-to-tr from-[var(--accent)] to-purple-400 rounded-xl flex items-center justify-center shadow-lg"><Zap className="text-white"/></div>
+                        <button onClick={() => setView('feed')} className={`p-3 rounded-xl transition ${view === 'feed' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)]'}`}><Hash/></button>
+                        <button onClick={() => setView('friends')} className={`p-3 rounded-xl transition ${view === 'friends' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)]'}`}><Users/></button>
+                        <button onClick={() => setView('crews')} className={`p-3 rounded-xl transition ${view === 'crews' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)]'}`}><Globe/></button>
+                        {user.isAdmin && <button onClick={() => setView('admin')} className={`p-3 rounded-xl transition ${view === 'admin' ? 'bg-red-600 text-white' : 'text-[var(--text-secondary)] hover:text-red-500'}`}><Shield/></button>}
+                        <div className="mt-auto flex flex-col gap-4"><button onClick={() => setShowSettings(true)}><Settings className="text-[var(--text-secondary)]"/></button><button onClick={() => signOut(auth)}><LogOut className="text-[var(--text-secondary)] hover:text-red-400"/></button></div>
+                    </nav>
+                    <main className="flex-1 bg-[var(--bg-primary)] overflow-hidden relative">
+                        {view === 'feed' && <Feed user={user} allUsers={allUsers} />}
+                        {view === 'friends' && <FriendsView currentUser={user} allUsers={allUsers} />}
+                        {view === 'crews' && <Crews user={user} allUsers={allUsers} />}
+                        {view === 'admin' && user.isAdmin && <AdminDashboard user={user} allUsers={allUsers} onExit={() => setView('feed')} />}
+                    </main>
+                    {showSettings && <SettingsModal user={user} onClose={() => setShowSettings(false)} />}
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
